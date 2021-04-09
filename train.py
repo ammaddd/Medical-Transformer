@@ -158,7 +158,7 @@ with experiment.context_manager("train"):
             
             loss = criterion(output, y_batch)
             experiment.log_metric("loss", loss.item(),
-                                  step=(batch_idx+1)*(epoch+1),
+                                  step=epoch*len(dataloader)+batch_idx,
                                   epoch=epoch)
             
             # ===================backward====================
