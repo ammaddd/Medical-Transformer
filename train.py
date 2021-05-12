@@ -1,5 +1,6 @@
 # Code for MedT
-
+from comet_utils import CometLogger
+from contextlib import suppress
 import torch
 import lib
 import argparse
@@ -62,6 +63,8 @@ parser.add_argument('--crop', type=int, default=None)
 parser.add_argument('--imgsize', type=int, default=None)
 parser.add_argument('--device', default='cuda', type=str)
 parser.add_argument('--gray', default='no', type=str)
+parser.add_argument('--comet', default=False, type=bool,
+                    help='enable comet logging (if comet installed)')
 
 args = parser.parse_args()
 gray_ = args.gray
@@ -69,6 +72,10 @@ aug = args.aug
 direc = args.direc
 modelname = args.modelname
 imgsize = args.imgsize
+
+comet_logger = CometLogger(args.comet, auto_metric_logging=False)
+comet_logger.log_others(vars(args))
+comet_logger.log_code('lib/models/axialnet.py')
 
 if gray_ == "yes":
     from utils_gray import JointTransform2D, ImageToImage2D, Image2D
@@ -122,70 +129,28 @@ torch.cuda.manual_seed(seed)
 # torch.set_deterministic(True)
 # random.seed(seed)
 
-
-for epoch in range(args.epochs):
-
-    epoch_running_loss = 0
-    
-    for batch_idx, (X_batch, y_batch, *rest) in enumerate(dataloader):        
+context_manager = comet_logger.context_manager("train") \
+                  if comet_logger.is_logging() == True \
+                  else suppress()
+with context_manager:
+    for epoch in range(args.epochs):
+        comet_logger.set_epoch(epoch)
+        epoch_running_loss = 0
         
-        
+        for batch_idx, (X_batch, y_batch, *rest) in enumerate(dataloader):        
+            
+            
 
-        X_batch = Variable(X_batch.to(device ='cuda'))
-        y_batch = Variable(y_batch.to(device='cuda'))
-        
-        # ===================forward=====================
-        
-
-        output = model(X_batch)
-
-        tmp2 = y_batch.detach().cpu().numpy()
-        tmp = output.detach().cpu().numpy()
-        tmp[tmp>=0.5] = 1
-        tmp[tmp<0.5] = 0
-        tmp2[tmp2>0] = 1
-        tmp2[tmp2<=0] = 0
-        tmp2 = tmp2.astype(int)
-        tmp = tmp.astype(int)
-
-        yHaT = tmp
-        yval = tmp2
-
-        
-
-        loss = criterion(output, y_batch)
-        
-        # ===================backward====================
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        epoch_running_loss += loss.item()
-        
-    # ===================log========================
-    print('epoch [{}/{}], loss:{:.4f}'
-          .format(epoch, args.epochs, epoch_running_loss/(batch_idx+1)))
-
-    
-    if epoch == 10:
-        for param in model.parameters():
-            param.requires_grad =True
-    if (epoch % args.save_freq) ==0:
-
-        for batch_idx, (X_batch, y_batch, *rest) in enumerate(valloader):
-            # print(batch_idx)
-            if isinstance(rest[0][0], str):
-                        image_filename = rest[0][0]
-            else:
-                        image_filename = '%s.png' % str(batch_idx + 1).zfill(3)
-
-            X_batch = Variable(X_batch.to(device='cuda'))
+            X_batch = Variable(X_batch.to(device ='cuda'))
             y_batch = Variable(y_batch.to(device='cuda'))
-            # start = timeit.default_timer()
-            y_out = model(X_batch)
-            # stop = timeit.default_timer()
-            # print('Time: ', stop - start) 
+            
+            # ===================forward=====================
+            
+
+            output = model(X_batch)
+
             tmp2 = y_batch.detach().cpu().numpy()
-            tmp = y_out.detach().cpu().numpy()
+            tmp = output.detach().cpu().numpy()
             tmp[tmp>=0.5] = 1
             tmp[tmp<0.5] = 0
             tmp2[tmp2>0] = 1
@@ -193,28 +158,76 @@ for epoch in range(args.epochs):
             tmp2 = tmp2.astype(int)
             tmp = tmp.astype(int)
 
-            # print(np.unique(tmp2))
             yHaT = tmp
             yval = tmp2
 
-            epsilon = 1e-20
             
-            del X_batch, y_batch,tmp,tmp2, y_out
+            
+            loss = criterion(output, y_batch)
+            comet_logger.log_metric("loss", loss.item(),
+                                    step=epoch*len(dataloader)+batch_idx,
+                                    epoch=epoch)
+            
+            # ===================backward====================
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            epoch_running_loss += loss.item()
+            
+        # ===================log========================
+        print('epoch [{}/{}], loss:{:.4f}'
+            .format(epoch, args.epochs, epoch_running_loss/(batch_idx+1)))
 
-            
-            yHaT[yHaT==1] =255
-            yval[yval==1] =255
-            fulldir = direc+"/{}/".format(epoch)
-            # print(fulldir+image_filename)
-            if not os.path.isdir(fulldir):
+        
+        if epoch == 10:
+            for param in model.parameters():
+                param.requires_grad =True
+        if (epoch % args.save_freq) ==0:
+
+            for batch_idx, (X_batch, y_batch, *rest) in enumerate(valloader):
+                # print(batch_idx)
+                if isinstance(rest[0][0], str):
+                            image_filename = rest[0][0]
+                else:
+                            image_filename = '%s.png' % str(batch_idx + 1).zfill(3)
+
+                X_batch = Variable(X_batch.to(device='cuda'))
+                y_batch = Variable(y_batch.to(device='cuda'))
+                # start = timeit.default_timer()
+                y_out = model(X_batch)
+                # stop = timeit.default_timer()
+                # print('Time: ', stop - start) 
+                tmp2 = y_batch.detach().cpu().numpy()
+                tmp = y_out.detach().cpu().numpy()
+                tmp[tmp>=0.5] = 1
+                tmp[tmp<0.5] = 0
+                tmp2[tmp2>0] = 1
+                tmp2[tmp2<=0] = 0
+                tmp2 = tmp2.astype(int)
+                tmp = tmp.astype(int)
+
+                # print(np.unique(tmp2))
+                yHaT = tmp
+                yval = tmp2
+
+                epsilon = 1e-20
                 
-                os.makedirs(fulldir)
-            
-            cv2.imwrite(fulldir+image_filename, yHaT[0,1,:,:])
-            # cv2.imwrite(fulldir+'/gt_{}.png'.format(count), yval[0,:,:])
-        fulldir = direc+"/{}/".format(epoch)
-        torch.save(model.state_dict(), fulldir+args.modelname+".pth")
-        torch.save(model.state_dict(), direc+"final_model.pth")
-            
+                del X_batch, y_batch,tmp,tmp2, y_out
+
+                
+                yHaT[yHaT==1] =255
+                yval[yval==1] =255
+                fulldir = direc+"/{}/".format(epoch)
+                # print(fulldir+image_filename)
+                if not os.path.isdir(fulldir):
+                    
+                    os.makedirs(fulldir)
+                
+                cv2.imwrite(fulldir+image_filename, yHaT[0,1,:,:])
+                # cv2.imwrite(fulldir+'/gt_{}.png'.format(count), yval[0,:,:])
+            fulldir = direc+"/{}/".format(epoch)
+            torch.save(model.state_dict(), fulldir+args.modelname+".pth")
+            torch.save(model.state_dict(), direc+"final_model.pth")
+            comet_logger.log_model("medtransformer", direc+"final_model.pth")
 
 
