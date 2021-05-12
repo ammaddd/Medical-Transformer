@@ -1,6 +1,6 @@
 # Code for MedT
-from comet_ml import Experiment
-experiment = Experiment()
+from comet_utils import CometLogger
+from contextlib import suppress
 import torch
 import lib
 import argparse
@@ -63,6 +63,8 @@ parser.add_argument('--crop', type=int, default=None)
 parser.add_argument('--imgsize', type=int, default=None)
 parser.add_argument('--device', default='cuda', type=str)
 parser.add_argument('--gray', default='no', type=str)
+parser.add_argument('--comet', default=False, type=bool,
+                    help='enable comet logging (if comet installed)')
 
 args = parser.parse_args()
 gray_ = args.gray
@@ -70,8 +72,10 @@ aug = args.aug
 direc = args.direc
 modelname = args.modelname
 imgsize = args.imgsize
-experiment.log_others(vars(args))
-experiment.log_code('lib/models/axialnet.py')
+
+comet_logger = CometLogger(args.comet, auto_metric_logging=False)
+comet_logger.log_others(vars(args))
+comet_logger.log_code('lib/models/axialnet.py')
 
 if gray_ == "yes":
     from utils_gray import JointTransform2D, ImageToImage2D, Image2D
@@ -125,9 +129,12 @@ torch.cuda.manual_seed(seed)
 # torch.set_deterministic(True)
 # random.seed(seed)
 
-with experiment.context_manager("train"):
+context_manager = comet_logger.context_manager("train") \
+                  if comet_logger.is_logging() == True \
+                  else suppress()
+with context_manager:
     for epoch in range(args.epochs):
-        experiment.set_epoch(epoch)
+        comet_logger.set_epoch(epoch)
         epoch_running_loss = 0
         
         for batch_idx, (X_batch, y_batch, *rest) in enumerate(dataloader):        
@@ -157,9 +164,9 @@ with experiment.context_manager("train"):
             
             
             loss = criterion(output, y_batch)
-            experiment.log_metric("loss", loss.item(),
-                                  step=epoch*len(dataloader)+batch_idx,
-                                  epoch=epoch)
+            comet_logger.log_metric("loss", loss.item(),
+                                    step=epoch*len(dataloader)+batch_idx,
+                                    epoch=epoch)
             
             # ===================backward====================
             optimizer.zero_grad()
@@ -221,6 +228,6 @@ with experiment.context_manager("train"):
             fulldir = direc+"/{}/".format(epoch)
             torch.save(model.state_dict(), fulldir+args.modelname+".pth")
             torch.save(model.state_dict(), direc+"final_model.pth")
-            experiment.log_model("medtransformer", direc+"final_model.pth")
+            comet_logger.log_model("medtransformer", direc+"final_model.pth")
 
 
